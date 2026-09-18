@@ -71,7 +71,13 @@
 ## 자주 사용하는 명령어
 
 ### 초기 설정
+
+**⚠️ 가상환경 필수:** 이 프로젝트는 `chatbot` 콘다 환경에서만 실행됩니다.
+
 ```bash
+# 가상환경 활성화
+conda activate chatbot
+
 # 의존성 설치
 poetry install
 
@@ -100,8 +106,13 @@ streamlit run app.py
 
 **LangGraph CLI (대화형 그래프 테스트)**
 ```bash
+# ⚠️ Windows에서 필수: UTF-8 인코딩 설정 (먼저 실행)
+chcp 65001
+
+# 가상환경 활성화
+conda activate chatbot
+
 # 프로젝트 루트에서 실행 (langgraph.json 위치)
-# 필수: PostgreSQL 실행 중 + .env 로드됨
 langgraph dev
 
 # http://localhost:2024에서 로컬 스튜디오 열기 (그래프 시각화 및 테스트)
