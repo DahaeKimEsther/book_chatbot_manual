@@ -1,8 +1,14 @@
 import uuid
 import streamlit as st
 from langchain_core.messages import HumanMessage
-from book_chatbot.graph import graph
+from book_chatbot.graph import build_graph_with_checkpointer
 from db import save_message, load_messages, get_threads
+
+
+@st.cache_resource
+def _graph():
+    """Streamlit 재실행 시에도 그래프 인스턴스 재사용 (DB 연결 누적 방지)"""
+    return build_graph_with_checkpointer()
 
 def show_chat():
     st.title("Chatbot")
@@ -45,7 +51,7 @@ def show_chat():
 
         with st.chat_message("assistant"):
             with st.spinner("생각 중..."):
-                result = graph.invoke(
+                result = _graph().invoke(
                     {"messages": [HumanMessage(content=prompt)]},
                     config=config,
                 )

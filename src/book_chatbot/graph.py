@@ -126,12 +126,20 @@ builder.add_edge("book_recommendation_tool_node", "book_recommendation")
 builder.add_edge("draft_response", END)
 
 #GRAPH
-_conn_string = (
-    f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-    f"@localhost:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB')}"
-)
-_conn = psycopg.Connection.connect(_conn_string, autocommit=True)
-_checkpointer = PostgresSaver(_conn)
-_checkpointer.setup()
+graph = builder.compile()
 
-graph = builder.compile(checkpointer=_checkpointer)
+
+def _conn_string() -> str:
+    """PostgreSQL 연결 문자열 (호출 시점에 환경변수 조회)"""
+    return (
+        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+        f"@localhost:{os.getenv('POSTGRES_PORT', '5432')}/{os.getenv('POSTGRES_DB')}"
+    )
+
+
+def build_graph_with_checkpointer():
+    """Streamlit용 체크포인터 포함 그래프 빌드"""
+    conn = psycopg.Connection.connect(_conn_string(), autocommit=True)
+    cp = PostgresSaver(conn)
+    cp.setup()
+    return builder.compile(checkpointer=cp)
