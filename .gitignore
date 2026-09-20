@@ -19,3 +19,7 @@ docker/postgres
 
 # 가상 환경
 .venv*/
+
+# IDE
+.vscode
+.claude/settings.local.json
