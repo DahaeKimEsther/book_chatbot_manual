@@ -104,20 +104,6 @@ streamlit run app.py
 - 진입점에서 .env 로드
 - 인증 필요 (db.py 설정 없으면 테스트 사용자 기본값)
 
-**LangGraph CLI (대화형 그래프 테스트)**
-```bash
-# ⚠️ Windows에서 필수: UTF-8 인코딩 설정 (먼저 실행)
-chcp 65001
-
-# 가상환경 활성화
-conda activate chatbot
-
-# 프로젝트 루트에서 실행 (langgraph.json 위치)
-langgraph dev
-
-# http://localhost:2024에서 로컬 스튜디오 열기 (그래프 시각화 및 테스트)
-```
-
 **직접 에이전트 테스트**
 ```bash
 # book_memo_agent (agent.py 메인 블록)
@@ -190,6 +176,7 @@ POSTGRES_PORT=5432  # 선택사항, 기본값 5432
 - **260813**: langgraph-dev는 상위 디렉토리에서 발견된 .env를 집어올 수 있음 (conftest.py는 테스트에서 완화)
 - **260814**: 커스텀 체크포인터 설정은 그래프 빌드 시 PostgreSQL 연결 필요
 - **260315**: 다중 의도 라우팅은 순차 처리 필요 (병렬화 미구현)
+- **langgraph dev Studio UI**: Windows + Chrome 조합에서 Chrome PNA 정책이 `smith.langchain.com`(공개 HTTPS)→`127.0.0.1:2024`(사설 loopback) 요청을 차단해 연동 불가 (wontfix, [GitHub #7](https://github.com/DahaeKimEsther/book_chatbot_manual/issues/7))
 
 ## 테스트 전략
 
