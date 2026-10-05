@@ -149,6 +149,13 @@ POSTGRES_PORT=5432  # 선택사항, 기본값 5432
 
 **주의사항**: graph.py는 임포트 시점에 이 Postgres 변수에 하드 의존합니다. .env가 없거나 변수가 설정되지 않으면 `langgraph dev` 실행 시 그래프 초기화 중 조용히 실패합니다.
 
+## MCP 서버 (LangSmith)
+
+- `.mcp.json`에 LangSmith MCP 서버(`https://api.smith.langchain.com/mcp`)가 등록되어 있습니다.
+- **인증은 OAuth 방식**을 사용합니다. Claude Code에서 `/mcp`를 실행해 브라우저로 로그인하면 됩니다.
+- `.mcp.json`은 커밋되는 파일이므로 API 키나 `headers`를 넣지 않습니다. `.env`는 Claude Code가 자동으로 읽지 않아 `${LANGSMITH_API_KEY}` 확장도 동작하지 않기 때문에, API 키 헤더 방식은 사용하지 않습니다.
+- 팀원은 각자 자기 LangSmith 계정으로 인증합니다. 자세한 내용은 `docs/mcp.md`를 참고하세요.
+
 ## 주요 설계 패턴
 
 ### 다중 의도 라우팅 (graph.py)
