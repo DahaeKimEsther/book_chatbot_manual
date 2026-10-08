@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from langgraph.graph.message import add_messages
 
 class FeatureClassification(TypedDict):
-    intent: Literal["book_search", "book_recommendation", "introduce_features"]
+    intent: Literal["book_search", "book_recommendation", "book_memo", "introduce_features"]
     query_related_to_intent: str
 
 class IntentClassifications(TypedDict):

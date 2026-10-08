@@ -9,19 +9,21 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from .schema import OverallState, IntentClassifications
-from .tool import basic_book_search, price_description_book_search, keyword_generator
+from .tool import basic_book_search, price_description_book_search, keyword_generator, book_memo_analyzer
 
 llm = ChatOpenAI(model="gpt-5.2")
 book_search_tool_node = ToolNode([basic_book_search, price_description_book_search])
 book_recommendation_tool_node = ToolNode([basic_book_search, keyword_generator])
+book_memo_tool_node = ToolNode([basic_book_search, book_memo_analyzer])
 
 INTENT_TO_NODE = {
     "book_search": "book_search",
     "book_recommendation": "book_recommendation",
+    "book_memo": "book_memo",
     "introduce_features": "introduce_features",
 }
 
-def classify_intent(state: OverallState) -> Command[Literal["book_search", "book_recommendation", "introduce_features"]]:
+def classify_intent(state: OverallState) -> Command[Literal["book_search", "book_recommendation", "book_memo", "introduce_features"]]:
     """Use LLM to classify book search intent (supports multiple intents)"""
     structured_llm = llm.with_structured_output(IntentClassifications)
 
@@ -32,10 +34,12 @@ def classify_intent(state: OverallState) -> Command[Literal["book_search", "book
     Messages: {state['messages']}
 
     Provide a list of classifications. Each item must include:
-    - intent: one of book_search, book_recommendation, introduce_features
+    - intent: one of book_search, book_recommendation, book_memo, introduce_features
     - query_related_to_intent: the sub-query relevant to that specific intent
 
-    classify intent as 'introduce_features' when user asks about things not related to book_search or book_recommendation.
+    classify intent as 'book_memo' when the user writes a note about a book they are reading —
+    mentioning the book title together with how many pages they've read and/or their impression.
+    classify intent as 'introduce_features' when user asks about things not related to book_search, book_recommendation or book_memo.
     """
     classification = structured_llm.invoke(classification_prompt)
     intents = classification["intents"]
@@ -66,12 +70,19 @@ def book_recommendation(state: OverallState) -> dict:
     response = model_with_tools.invoke(messages)
     return {"messages": [response]}
 
+def book_memo(state: OverallState) -> dict:
+    """LLM이 책 정보 검색(basic_book_search) 및 메모 분석(book_memo_analyzer) 도구를 호출."""
+    model_with_tools = llm.bind_tools([basic_book_search, book_memo_analyzer])
+    messages = state["messages"]
+    response = model_with_tools.invoke(messages)
+    return {"messages": [response]}
+
 
 def introduce_features(state: OverallState) -> Command[Literal["route_next_intent"]]:
 
     answer = llm.invoke(
         [SystemMessage(content=f"""
-        Just answer that we have features including 'book_search' and 'book_recommendation' and cannot answer to your question because we have just these features.
+        Just answer that we have features including 'book_search', 'book_recommendation' and 'book_memo' and cannot answer to your question because we have just these features.
 
         Intents of user: {state["classification"]}
         Messages: {state['messages']}
@@ -79,7 +90,7 @@ def introduce_features(state: OverallState) -> Command[Literal["route_next_inten
     )
     return Command(update={"messages": [answer]}, goto="route_next_intent")
 
-def route_next_intent(state: OverallState) -> Command[Literal["book_search", "book_recommendation", "introduce_features", "draft_response"]]:
+def route_next_intent(state: OverallState) -> Command[Literal["book_search", "book_recommendation", "book_memo", "introduce_features", "draft_response"]]:
     """남은 인텐트가 있으면 다음 노드로, 없으면 draft_response로"""
     remaining = state["remaining_intents"]
     if not remaining:
@@ -112,6 +123,8 @@ builder.add_node("book_search", book_search)
 builder.add_node("book_search_tool_node", book_search_tool_node)
 builder.add_node("book_recommendation", book_recommendation)
 builder.add_node("book_recommendation_tool_node", book_recommendation_tool_node)
+builder.add_node("book_memo", book_memo)
+builder.add_node("book_memo_tool_node", book_memo_tool_node)
 builder.add_node("introduce_features", introduce_features)
 builder.add_node("draft_response", draft_response)
 
@@ -123,6 +136,9 @@ builder.add_edge("book_search_tool_node", "book_search")
 # 2. book_recommendation agent
 builder.add_conditional_edges("book_recommendation", tools_condition, {"tools": "book_recommendation_tool_node", "__end__": "route_next_intent"})
 builder.add_edge("book_recommendation_tool_node", "book_recommendation")
+# 3. book_memo agent
+builder.add_conditional_edges("book_memo", tools_condition, {"tools": "book_memo_tool_node", "__end__": "route_next_intent"})
+builder.add_edge("book_memo_tool_node", "book_memo")
 builder.add_edge("draft_response", END)
 
 #GRAPH
