@@ -25,12 +25,12 @@
 
 **두 가지 병렬 에이전트 아키텍처:**
 
-1. **`src/book_chatbot/graph.py` — LangGraph StateGraph** (다중 의도 라우팅)
-   - 단일 사용자 메시지에서 여러 의도를 분류
-   - 각 의도를 전문 핸들러로 순차적으로 라우팅
-   - `ToolNode`와 `tools_condition`을 통한 조건부 라우팅 사용
-   - 지원 의도: book_search, book_recommendation, introduce_features
-   - `add_messages` 리듀서를 통해 도구 결과가 state.messages에 자동 누적
+1. **`src/book_chatbot/graph.py` — LangGraph StateGraph** (supervisor + 서브에이전트 도구)
+   - `supervisor` 노드가 `book_search`, `book_recommendation`, `book_memo` 도구(서브그래프 래핑)를 호출
+   - 한 턴에 여러 도구 호출 시 `ToolNode`가 병렬 실행
+   - 서브에이전트는 `build_subagent` 팩토리로 생성 (agent ↔ tools 루프), 내부 메시지는 부모와 격리
+   - 서브에이전트는 `request` 문자열만 보므로 supervisor가 맥락을 풀어서 전달 (SUPERVISOR_PROMPT)
+   - 도구 없이 supervisor가 직접 답변하면 종료 (기능 소개 포함), 최종 답변은 `messages[-1].content`
    - PostgreSQL에 상태를 체크포인트하여 지속성/재개 지원
 
 2. **`src/book_chatbot/agent.py` — LangChain Agents** (도구 조율)
@@ -56,8 +56,7 @@
 
 ### 스키마 (`src/book_chatbot/schema.py`, `src/book_chatbot/tool_schema.py`)
 
-- `OverallState`: 그래프 상태용 TypedDict (messages, classification, remaining_intents, draft_response, search_results)
-- `IntentClassifications`: 의도 목록 (하위 쿼리 포함)
+- `OverallState`: 그래프 상태용 TypedDict (messages, search_results)
 - `BookMemoRecord`: 책 메타데이터(제목, 저자, 출판사, ISBN) + 메모 데이터(읽은 페이지, 감상)를 결합한 Pydantic 모델
 - 도구 검증용 API 파라미터 스키마
 
@@ -158,11 +157,10 @@ POSTGRES_PORT=5432  # 선택사항, 기본값 5432
 
 ## 주요 설계 패턴
 
-### 다중 의도 라우팅 (graph.py)
-1. 사용자 메시지 → `classify_intent`에서 모든 의도 + 하위 쿼리 추출
-2. 첫 번째 의도 처리, 나머지는 상태에 큐잉
-3. 도구 결과 후 `route_next_intent`에서 다음 의도 디스패치
-4. 큐가 빌 때까지 반복 → `draft_response`에서 최종 답변 합성
+### Supervisor 라우팅 (graph.py)
+1. 사용자 메시지 → `supervisor`가 필요한 서브에이전트 도구를 선택 (여러 개 동시 가능)
+2. `subagent_tools`(ToolNode)가 서브에이전트를 실행하고 결과 문자열을 ToolMessage로 반환
+3. 다시 `supervisor`로 돌아가 도구 호출이 없으면 최종 답변 후 종료
 
 ### 도구 바인딩 및 조건부 엣지 (graph.py)
 - LLM은 `.bind_tools([...])`를 통해 도구에 바인딩됨
@@ -182,7 +180,7 @@ POSTGRES_PORT=5432  # 선택사항, 기본값 5432
 자세한 내용은 `docs/issues/`를 참고:
 - **260813**: langgraph-dev는 상위 디렉토리에서 발견된 .env를 집어올 수 있음 (conftest.py는 테스트에서 완화)
 - **260814**: 커스텀 체크포인터 설정은 그래프 빌드 시 PostgreSQL 연결 필요
-- **260315**: 다중 의도 라우팅은 순차 처리 필요 (병렬화 미구현)
+- **260315**: 다중 의도 순차 처리 제약 → supervisor 도구 병렬 호출 구조로 해소
 - **langgraph dev Studio UI**: Windows + Chrome 조합에서 Chrome PNA 정책이 `smith.langchain.com`(공개 HTTPS)→`127.0.0.1:2024`(사설 loopback) 요청을 차단해 연동 불가 (wontfix, [GitHub #7](https://github.com/DahaeKimEsther/book_chatbot_manual/issues/7))
 
 ## 테스트 전략

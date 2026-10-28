@@ -1,147 +1,110 @@
 import os
-from typing import Literal
-from langgraph.graph import StateGraph, START, END
-from langgraph.types import Command
 import psycopg
+from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.checkpoint.postgres import PostgresSaver
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.tools import tool
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from .schema import OverallState, IntentClassifications
+from .schema import OverallState
 from .tool import basic_book_search, price_description_book_search, keyword_generator, book_memo_analyzer
 
 llm = ChatOpenAI(model="gpt-5.2")
-book_search_tool_node = ToolNode([basic_book_search, price_description_book_search])
-book_recommendation_tool_node = ToolNode([basic_book_search, keyword_generator])
-book_memo_tool_node = ToolNode([basic_book_search, book_memo_analyzer])
 
-INTENT_TO_NODE = {
-    "book_search": "book_search",
-    "book_recommendation": "book_recommendation",
-    "book_memo": "book_memo",
-    "introduce_features": "introduce_features",
-}
+# ---- 프롬프트 ----
+BOOK_SEARCH_PROMPT = """You are a book search assistant.
+Use basic_book_search for title, author, publisher, link, ISBN and publication date.
+Use price_description_book_search for lowest price and book description.
+Call both tools when the request needs both. Answer based on the tool results."""
 
-def classify_intent(state: OverallState) -> Command[Literal["book_search", "book_recommendation", "book_memo", "introduce_features"]]:
-    """Use LLM to classify book search intent (supports multiple intents)"""
-    structured_llm = llm.with_structured_output(IntentClassifications)
+BOOK_RECOMMEND_PROMPT = """You are a book recommendation assistant.
+Use keyword_generator to derive keywords from the request, then use basic_book_search with those keywords
+to find real books. Recommend books based on the search results."""
 
-    classification_prompt = f"""
-    Analyze this customer message and classify his/her intentions.
-    There may be MORE THAN ONE intention in a single message — identify all of them.
+BOOK_MEMO_PROMPT = """You are a reading memo assistant.
+Use book_memo_analyzer to extract pages read and the impression from the user's memo.
+Use basic_book_search to look up the book's metadata (title, author, publisher, ISBN) mentioned in the memo.
+Summarize the recorded memo together with the book information."""
 
-    Messages: {state['messages']}
+SUPERVISOR_PROMPT = """You are a helpful book assistant. Route the user's request to the right tool.
+- book_search: searching books, lowest price, book description
+- book_recommendation: recommending books
+- book_memo: the user writes a note about a book they are reading
+  (book title together with pages read and/or impression)
 
-    Provide a list of classifications. Each item must include:
-    - intent: one of book_search, book_recommendation, book_memo, introduce_features
-    - query_related_to_intent: the sub-query relevant to that specific intent
+A single message may contain several requests: call all the needed tools in the same turn.
+The tools only see the `request` string, NOT the conversation history. When the user refers to earlier turns
+(e.g. "아까 그 책 가격은?"), resolve the reference and put the concrete book title and details into `request`.
 
-    classify intent as 'book_memo' when the user writes a note about a book they are reading —
-    mentioning the book title together with how many pages they've read and/or their impression.
-    classify intent as 'introduce_features' when user asks about things not related to book_search, book_recommendation or book_memo.
-    """
-    classification = structured_llm.invoke(classification_prompt)
-    intents = classification["intents"]
+If the request is unrelated to book search, recommendation or memo, do not call any tool. Just answer that
+we only provide the features 'book_search', 'book_recommendation' and 'book_memo'.
+After the tools return, write the final answer for the user based on their results."""
 
-    first_intent = intents[0]
-    remaining = intents[1:]
 
-    return Command(
-        update={
-            "classification": intents,
-            "remaining_intents": remaining,
-            "messages": [HumanMessage(content=first_intent["query_related_to_intent"])],
-        },
-        goto=INTENT_TO_NODE[first_intent["intent"]],
-    )
-    
-def book_search(state: OverallState) -> dict:
-    """LLM이 어느 tool 노드로 갈지, 혹은 둘 다 갈지 결정."""
-    model_with_tools = llm.bind_tools([basic_book_search, price_description_book_search])
-    messages = state["messages"]
-    response = model_with_tools.invoke(messages)
+# ---- 서브에이전트 (agent ↔ tools 루프 팩토리) ----
+def build_subagent(name: str, tools: list, system_prompt: str):
+    model = llm.bind_tools(tools)
+
+    def agent(state: MessagesState):
+        return {"messages": [model.invoke([SystemMessage(system_prompt), *state["messages"]])]}
+
+    b = StateGraph(MessagesState)
+    b.add_node(name, agent)
+    b.add_node("tools", ToolNode(tools))
+    b.add_edge(START, name)
+    b.add_conditional_edges(name, tools_condition)  # tools / END
+    b.add_edge("tools", name)
+    return b.compile()
+
+
+book_search_subagent = build_subagent(
+    "book_search", [basic_book_search, price_description_book_search], BOOK_SEARCH_PROMPT)
+book_recommendation_subagent = build_subagent(
+    "book_recommendation", [basic_book_search, keyword_generator], BOOK_RECOMMEND_PROMPT)
+book_memo_subagent = build_subagent(
+    "book_memo", [basic_book_search, book_memo_analyzer], BOOK_MEMO_PROMPT)
+
+
+# ---- supervisor용 도구 (docstring이 라우팅 기준) ----
+@tool
+def book_search(request: str) -> str:
+    """제목/저자/출판사/최저가/책 소개 등 책 검색이 필요할 때. 입력: 자연어 검색 요청"""
+    result = book_search_subagent.invoke({"messages": [HumanMessage(request)]})
+    return result["messages"][-1].content
+
+
+@tool
+def book_recommendation(request: str) -> str:
+    """책 추천이 필요할 때. 입력: 자연어 추천 요청"""
+    result = book_recommendation_subagent.invoke({"messages": [HumanMessage(request)]})
+    return result["messages"][-1].content
+
+
+@tool
+def book_memo(request: str) -> str:
+    """읽고 있는 책의 메모(읽은 페이지, 감상)를 기록할 때. 입력: 책 제목이 포함된 메모 원문"""
+    result = book_memo_subagent.invoke({"messages": [HumanMessage(request)]})
+    return result["messages"][-1].content
+
+
+# ---- 부모 그래프: supervisor ↔ subagent_tools ----
+subagent_tools = [book_search, book_recommendation, book_memo]
+supervisor_model = llm.bind_tools(subagent_tools)
+
+
+def supervisor(state: OverallState) -> dict:
+    response = supervisor_model.invoke([SystemMessage(SUPERVISOR_PROMPT), *state["messages"]])
     return {"messages": [response]}
 
-def book_recommendation(state: OverallState) -> dict:
-    """LLM이 어느 tool 노드로 갈지, 혹은 둘 다 갈지 결정."""
-    model_with_tools = llm.bind_tools([basic_book_search, keyword_generator])
-    messages = state["messages"]
-    response = model_with_tools.invoke(messages)
-    return {"messages": [response]}
 
-def book_memo(state: OverallState) -> dict:
-    """LLM이 책 정보 검색(basic_book_search) 및 메모 분석(book_memo_analyzer) 도구를 호출."""
-    model_with_tools = llm.bind_tools([basic_book_search, book_memo_analyzer])
-    messages = state["messages"]
-    response = model_with_tools.invoke(messages)
-    return {"messages": [response]}
-
-
-def introduce_features(state: OverallState) -> Command[Literal["route_next_intent"]]:
-
-    answer = llm.invoke(
-        [SystemMessage(content=f"""
-        Just answer that we have features including 'book_search', 'book_recommendation' and 'book_memo' and cannot answer to your question because we have just these features.
-
-        Intents of user: {state["classification"]}
-        Messages: {state['messages']}
-        """)]
-    )
-    return Command(update={"messages": [answer]}, goto="route_next_intent")
-
-def route_next_intent(state: OverallState) -> Command[Literal["book_search", "book_recommendation", "book_memo", "introduce_features", "draft_response"]]:
-    """남은 인텐트가 있으면 다음 노드로, 없으면 draft_response로"""
-    remaining = state["remaining_intents"]
-    if not remaining:
-        return Command(goto="draft_response")
-
-    next_intent = remaining[0]
-    return Command(
-        update={
-            "remaining_intents": remaining[1:],
-            "messages": [HumanMessage(content=next_intent["query_related_to_intent"])],
-        },
-        goto=INTENT_TO_NODE[next_intent["intent"]],
-    )
-    
-def draft_response(state: OverallState):
-    response = llm.invoke([
-        SystemMessage(content="You are a helpful book assistant. Answer the user's question based on the search results provided."),
-        *state["messages"],  # tool 결과(ToolMessage)가 여기 있음
-    ])
-    return {"draft_response": response.content}
-
-
-# ---- Graph ----
 builder = StateGraph(OverallState)
+builder.add_node("supervisor", supervisor)
+builder.add_node("subagent_tools", ToolNode(subagent_tools))
 
-#NODE
-builder.add_node("classify_intent", classify_intent)
-builder.add_node("route_next_intent", route_next_intent)
-builder.add_node("book_search", book_search)
-builder.add_node("book_search_tool_node", book_search_tool_node)
-builder.add_node("book_recommendation", book_recommendation)
-builder.add_node("book_recommendation_tool_node", book_recommendation_tool_node)
-builder.add_node("book_memo", book_memo)
-builder.add_node("book_memo_tool_node", book_memo_tool_node)
-builder.add_node("introduce_features", introduce_features)
-builder.add_node("draft_response", draft_response)
-
-# EDGE
-builder.add_edge(START, "classify_intent")
-# 1. book_search agent
-builder.add_conditional_edges("book_search", tools_condition, {"tools": "book_search_tool_node", "__end__": "route_next_intent"})
-builder.add_edge("book_search_tool_node", "book_search")
-# 2. book_recommendation agent
-builder.add_conditional_edges("book_recommendation", tools_condition, {"tools": "book_recommendation_tool_node", "__end__": "route_next_intent"})
-builder.add_edge("book_recommendation_tool_node", "book_recommendation")
-# 3. book_memo agent
-builder.add_conditional_edges("book_memo", tools_condition, {"tools": "book_memo_tool_node", "__end__": "route_next_intent"})
-builder.add_edge("book_memo_tool_node", "book_memo")
-builder.add_edge("draft_response", END)
-
-#GRAPH
+builder.add_edge(START, "supervisor")
+builder.add_conditional_edges("supervisor", tools_condition, {"tools": "subagent_tools", END: END})
+builder.add_edge("subagent_tools", "supervisor")
 graph = builder.compile()
 
 

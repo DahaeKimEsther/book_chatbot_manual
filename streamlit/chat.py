@@ -55,7 +55,7 @@ def show_chat():
                     {"messages": [HumanMessage(content=prompt)]},
                     config=config,
                 )
-                response = result.get("draft_response", "응답을 생성하지 못했습니다.")
+                response = result["messages"][-1].content or "응답을 생성하지 못했습니다."
             st.markdown(response)
 
         st.session_state.messages.append({"role": "assistant", "content": response})

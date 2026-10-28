@@ -1,5 +1,3 @@
-import re
-
 from langchain_core.messages import HumanMessage, ToolMessage
 
 from book_chatbot.graph import graph
@@ -13,23 +11,20 @@ def test_book_memo_graph():
 
     result = graph.invoke({"messages": [HumanMessage(content=query)]})
 
-    intents = [c["intent"] for c in result["classification"]]
-    assert "book_memo" in intents
-
+    # 서브에이전트 내부 메시지는 격리되므로 부모에서는 book_memo 도구 결과만 확인
     memo_messages = [
         m for m in result["messages"]
-        if isinstance(m, ToolMessage) and m.name == "book_memo_analyzer"
+        if isinstance(m, ToolMessage) and m.name == "book_memo"
     ]
-    assert memo_messages, "book_memo_analyzer 도구가 호출되지 않았습니다"
+    assert memo_messages, "book_memo 도구가 호출되지 않았습니다"
 
     memo_content = memo_messages[0].content
-    print("book_memo_analyzer 결과:", memo_content)
+    print("book_memo 결과:", memo_content)
+    assert "31" in memo_content
 
-    pages_read = re.search(r"pages_read=(\d+)", memo_content)
-    assert pages_read and int(pages_read.group(1)) == 31
-
-    print("최종 응답:", result["draft_response"])
-    assert result["draft_response"]
+    final_response = result["messages"][-1].content
+    print("최종 응답:", final_response)
+    assert final_response
 
 
 if __name__ == "__main__":
