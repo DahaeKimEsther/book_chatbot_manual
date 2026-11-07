@@ -47,6 +47,27 @@ class NaverBookSearchParams(BaseModel):
         description="검색할 ISBN"
     )
 
+class KakaoBookSearchParams(BaseModel):
+    """Params for kakao_book_search"""
+    query: str = Field(description="검색어")
+    target: Optional[Literal["title", "isbn", "publisher", "person"]] = Field(
+        default=None,
+        description="""## 검색 필드 제한 (없으면 전체 검색)
+        title: 제목
+        isbn: ISBN
+        publisher: 출판사
+        person: 저자
+        """
+    )
+    sort: Literal["accuracy", "latest"] = Field(
+        default="accuracy",
+        description="""## 정렬순서
+        accuracy: 정확도순(기본값)
+        latest: 발간일순
+        """
+    )
+    size: int = Field(default=10, ge=1, le=50, description="결과 개수 (1~50, 기본값 10)")
+
 class KeywordAnswer(BaseModel):
     keywords: list[str]
 

@@ -2,8 +2,23 @@ from langchain.tools import tool
 import os
 from langchain_openai import ChatOpenAI
 
-from .utils import aladin_search_api, naver_book_api
-from .tool_schema import AladinBookSearchParams, NaverBookSearchParams, KeywordAnswer, ReadingMemo
+from .utils import aladin_search_api, naver_book_api, kakao_book_api
+from .tool_schema import AladinBookSearchParams, NaverBookSearchParams, KakaoBookSearchParams, KeywordAnswer, ReadingMemo
+
+@tool(args_schema=KakaoBookSearchParams)
+def kakao_book_search(query:str,
+                target:str | None = None,
+                sort:str="accuracy",
+                size:int=10):
+    """search books with Kakao(Daum) book search API
+
+        Available Response
+        title, authors, publisher, isbn, datetime(published date), price, sale_price, contents(description), url, status
+    """
+    params = {"query": query, "target": target, "sort": sort, "size": size}
+    result = kakao_book_api(params)
+    output_keys = ["title", "authors", "publisher", "isbn", "datetime", "price", "sale_price", "contents", "url", "status"]
+    return [{k: v for k, v in doc.items() if k in output_keys} for doc in result["documents"]]
 
 @tool(args_schema=AladinBookSearchParams)
 def basic_book_search(Query:str,

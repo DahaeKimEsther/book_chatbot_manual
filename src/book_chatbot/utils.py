@@ -59,6 +59,20 @@ def naver_book_api(params:dict) -> dict:
     response.raise_for_status() # 에러 예외처리
     return response.json()
 
+def kakao_book_api(params:dict) -> dict:
+    """
+    카카오(다음) 책 검색 API 호출
+
+    Args:
+        params (dict): 요청 파라미터 (query, sort, page, size, target). None 값은 자동 제외
+    """
+    url = "https://dapi.kakao.com/v3/search/book"
+    headers = {"Authorization": f"KakaoAK {os.getenv('KAKAO_REST_API_KEY')}"}
+    params = {k: v for k, v in params.items() if v is not None}
+    response = requests.get(url, headers=headers, params=params, timeout=15)
+    response.raise_for_status() # 에러 예외처리
+    return response.json()
+
 def aladin_search_api(params:dict, output_keys:list[str]) -> dict:
     url = "http://www.aladin.co.kr/ttb/api/ItemSearch.aspx"
     response = requests.get(url, params=params)
